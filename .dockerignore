@@ -1,0 +1,8 @@
+assets/
+bin/
+.ffmpeg-build/
+.git/
+research/
+docs/
+*.md
+veo

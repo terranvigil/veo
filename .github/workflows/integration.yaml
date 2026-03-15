@@ -1,0 +1,46 @@
+name: Integration Tests
+
+on:
+  workflow_dispatch:
+    inputs:
+      asset_tier:
+        description: 'Test asset tier to download (micro, small)'
+        required: false
+        default: 'micro'
+
+jobs:
+  integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+
+      - name: Build VEO
+        run: go build -o veo ./cmd/veo/
+
+      - name: Build FFmpeg with libvmaf (Docker)
+        run: |
+          docker buildx build \
+            -f scripts/build-ffmpeg.dockerfile \
+            --platform linux/amd64 \
+            -o type=local,dest=./bin/ffmpeg \
+            .
+
+      - name: Verify FFmpeg
+        run: |
+          ./bin/ffmpeg/ffmpeg -version
+          ./bin/ffmpeg/ffmpeg -encoders 2>/dev/null | grep -E "libx264|libx265|libsvtav1"
+          ./bin/ffmpeg/ffmpeg -filters 2>/dev/null | grep libvmaf
+
+      - name: Download test assets
+        run: ./scripts/download-assets.sh --tier ${{ github.event.inputs.asset_tier }}
+
+      - name: Run integration tests
+        env:
+          VEO_FFMPEG: ${{ github.workspace }}/bin/ffmpeg/ffmpeg
+          VEO_FFPROBE: ${{ github.workspace }}/bin/ffmpeg/ffprobe
+        run: go test -tags=integration -race -count=1 -timeout=20m -v ./...

@@ -1,0 +1,55 @@
+version: "2"
+
+run:
+  go: "1.26"
+  timeout: 3m
+
+linters:
+  enable:
+    - bodyclose
+    - copyloopvar
+    - dogsled
+    - errorlint
+    - goconst
+    - gocritic
+    - goprintffuncname
+    - govet
+    - ineffassign
+    - misspell
+    - nakedret
+    - noctx
+    - staticcheck
+    - unconvert
+    - unparam
+    - unused
+    - whitespace
+
+linters-settings:
+  goconst:
+    min-len: 3
+    min-occurrences: 3
+  gocritic:
+    enabled-tags:
+      - diagnostic
+      - performance
+      - style
+  nakedret:
+    max-func-lines: 30
+
+issues:
+  exclude-dirs:
+    - vendor
+    - .ffmpeg-build
+  exclude-rules:
+    - path: _test\.go
+      linters:
+        - goconst
+        - errcheck
+        - unparam
+
+formatters:
+  enable:
+    - goimports
+  settings:
+    goimports:
+      local-prefixes: github.com/terranvigil/veo

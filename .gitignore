@@ -1,0 +1,47 @@
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary, built with `go test -c`
+*.test
+
+# Code coverage profiles and other test artifacts
+*.out
+coverage.*
+*.coverprofile
+profile.cov
+
+# Dependency directories (remove the comment below to include it)
+# vendor/
+
+# Go workspace file
+go.work
+go.work.sum
+
+# env file
+.env
+
+# Editor/IDE
+# .idea/
+# .vscode/
+
+# Downloaded test assets
+assets/
+
+# Built binary
+/veo
+
+# Built FFmpeg binaries and build artifacts
+bin/
+.ffmpeg-build/
+test-results/
+
+research/
+
+# Local-only files
+.claude/
+CLAUDE.md
+scripts/generate-doc-charts.go

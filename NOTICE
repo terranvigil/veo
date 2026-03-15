@@ -1,0 +1,55 @@
+VEO - Video Encoding Optimizer
+Copyright 2026 Terran Vigil
+
+This product includes software developed by third parties:
+
+- VMAF (Video Multi-Method Assessment Fusion)
+  Copyright Netflix, Inc.
+  Licensed under BSD-2-Clause
+  https://github.com/Netflix/vmaf
+
+- SVT-AV1 (Scalable Video Technology for AV1)
+  Copyright Alliance for Open Media, Intel Corporation
+  Licensed under BSD-2-Clause-Patent
+  https://gitlab.com/AOMediaCodec/SVT-AV1
+
+- FFmpeg
+  Licensed under GNU General Public License v2 or later (GPL-2.0-or-later)
+  https://ffmpeg.org
+  Note: VEO invokes FFmpeg as an external process and does not link against
+  FFmpeg libraries. The Docker-built static FFmpeg binaries in bin/ffmpeg/
+  are GPL-licensed and must be distributed under GPL terms.
+
+- x264
+  Copyright x264 project
+  Licensed under GPL-2.0-or-later
+  https://www.videolan.org/developers/x264.html
+
+- x265
+  Copyright MulticoreWare, Inc.
+  Licensed under GPL-2.0-or-later
+  https://bitbucket.org/multicoreware/x265_git
+
+- gonum/plot
+  Copyright The Gonum Authors
+  Licensed under BSD-3-Clause
+  https://gonum.org/v1/plot
+
+- Cobra
+  Copyright Steve Francia
+  Licensed under Apache-2.0
+  https://github.com/spf13/cobra
+
+CODEC PATENT NOTICE:
+
+H.264/AVC and H.265/HEVC are covered by patents held by various entities.
+Using VEO to encode content with these codecs may require patent licenses
+from MPEG LA (https://www.mpegla.com), HEVC Advance, and/or other patent
+pools, depending on your use case and jurisdiction.
+
+AV1 is an open, royalty-free codec developed by the Alliance for Open Media.
+No patent licenses are required for AV1 encoding or decoding.
+
+This notice is provided for informational purposes only and does not
+constitute legal advice. Consult a patent attorney for guidance on your
+specific use case.
