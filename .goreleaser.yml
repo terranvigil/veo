@@ -1,0 +1,11 @@
+builds:
+  - main: ./cmd/veo
+    binary: veo
+    goos: [darwin, linux]
+    goarch: [amd64, arm64]
+
+archives:
+  - format: tar.gz
+
+changelog:
+  use: github-native
