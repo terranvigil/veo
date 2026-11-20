@@ -1,11 +1,13 @@
-// Package compare provides a web-based side-by-side video comparison player
-// with VMAF per-frame overlay and quality dip markers.
 package compare
 
 import (
 	"context"
+	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
+	"io/fs"
 	"log/slog"
 	"net"
 	"net/http"
@@ -14,247 +16,353 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
+
+	"github.com/terranvigil/veo/web"
 )
 
-type Opts struct {
-	Reference string // path to reference (original) video
-	Encoded   string // path to encoded video
-	VMAFData  string // path to per-frame VMAF JSON (optional)
-	Port      int    // HTTP port (0 = auto)
-}
+const manifestName = "manifest.json"
 
-type FrameVMAF struct {
-	Frame int     `json:"frame"`
-	Time  float64 `json:"time"` // seconds
-	VMAF  float64 `json:"vmaf"`
-}
-
-// Dip represents a quality dip that the user should inspect.
-type Dip struct {
-	Frame    int     `json:"frame"`
-	Time     float64 `json:"time"`
-	VMAF     float64 `json:"vmaf"`
-	Severity string  `json:"severity"` // "warning" or "critical"
-}
-
-type PlayerData struct {
-	ReferenceURL string      `json:"referenceUrl"`
-	EncodedURL   string      `json:"encodedUrl"`
-	Frames       []FrameVMAF `json:"frames"`
-	Dips         []Dip       `json:"dips"`
-	AvgVMAF      float64     `json:"avgVmaf"`
-	MinVMAF      float64     `json:"minVmaf"`
-	MaxVMAF      float64     `json:"maxVmaf"`
-}
-
-// LoadVMAFData reads per-frame VMAF data from a JSON file produced by
-// quality.Measure with PerFrame=true.
-func LoadVMAFData(path string) ([]FrameVMAF, error) {
-	data, err := os.ReadFile(path)
+// NewHandler serves the player, its manifest and the videos under the same
+// relative URLs the static export uses, so one page works in both.
+func NewHandler(m *Manifest, files []File) (http.Handler, error) {
+	body, err := json.Marshal(m)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read VMAF data: %w", err)
+		return nil, fmt.Errorf("failed to encode manifest: %w", err)
 	}
+	paths := make(map[string]string, len(files))
+	for _, f := range files {
+		paths["/media/"+f.Src] = f.Path
+	}
+	static := http.FileServerFS(web.Static())
 
-	// lThe quality.Result JSON format
-	var result struct {
-		Frames []struct {
-			FrameNum int                `json:"frameNum"`
-			Metrics  map[string]float64 `json:"metrics"`
-		} `json:"frames"`
-	}
-	if err := json.Unmarshal(data, &result); err != nil {
-		return nil, fmt.Errorf("failed to parse VMAF data: %w", err)
-	}
-
-	// lAlso try the quality.Result format directly
-	var qualResult struct {
-		VMAF   float64 `json:"vmaf"`
-		Frames []struct {
-			FrameNum int     `json:"frameNum"`
-			VMAF     float64 `json:"vmaf"`
-		} `json:"frames"`
-	}
-	if err := json.Unmarshal(data, &qualResult); err == nil && len(qualResult.Frames) > 0 {
-		frames := make([]FrameVMAF, len(qualResult.Frames))
-		for i, f := range qualResult.Frames {
-			frames[i] = FrameVMAF{
-				Frame: f.FrameNum,
-				Time:  float64(f.FrameNum) / 24.0, // approximate; should come from probe
-				VMAF:  f.VMAF,
-			}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/"+manifestName {
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("Cache-Control", "no-store")
+			_, _ = w.Write(body)
+			return
 		}
-		return frames, nil
-	}
-
-	// lTry libvmaf raw format
-	frames := make([]FrameVMAF, len(result.Frames))
-	for i, f := range result.Frames {
-		vmaf := f.Metrics["vmaf"]
-		frames[i] = FrameVMAF{
-			Frame: f.FrameNum,
-			Time:  float64(f.FrameNum) / 24.0,
-			VMAF:  vmaf,
+		if path, ok := paths[r.URL.Path]; ok {
+			// ServeFile answers range requests, which seeking needs
+			http.ServeFile(w, r, path)
+			return
 		}
-	}
-	return frames, nil
+		w.Header().Set("Cache-Control", "no-store")
+		static.ServeHTTP(w, r)
+	}), nil
 }
 
-// FindDips identifies quality dips in per-frame VMAF data.
-// A dip is a frame where VMAF drops below the average by more than threshold.
-func FindDips(frames []FrameVMAF, warningThreshold, criticalThreshold float64) []Dip {
-	if len(frames) == 0 {
-		return nil
-	}
-
-	// lCompute average
-	var sum float64
-	for _, f := range frames {
-		sum += f.VMAF
-	}
-	avg := sum / float64(len(frames))
-
-	var dips []Dip
-	for _, f := range frames {
-		if f.VMAF < avg-criticalThreshold {
-			dips = append(dips, Dip{
-				Frame:    f.Frame,
-				Time:     f.Time,
-				VMAF:     f.VMAF,
-				Severity: "critical",
-			})
-		} else if f.VMAF < avg-warningThreshold {
-			dips = append(dips, Dip{
-				Frame:    f.Frame,
-				Time:     f.Time,
-				VMAF:     f.VMAF,
-				Severity: "warning",
-			})
-		}
-	}
-
-	// lDeduplicate: keep only dips that are local minima (not every frame in a dip region)
-	if len(dips) > 50 {
-		// lToo many dips - keep only the worst 50
-		// lSort by VMAF ascending and take first 50
-		sortedDips := make([]Dip, len(dips))
-		copy(sortedDips, dips)
-		for i := 0; i < len(sortedDips)-1; i++ {
-			for j := i + 1; j < len(sortedDips); j++ {
-				if sortedDips[j].VMAF < sortedDips[i].VMAF {
-					sortedDips[i], sortedDips[j] = sortedDips[j], sortedDips[i]
-				}
-			}
-		}
-		dips = sortedDips[:50]
-	}
-
-	return dips
-}
-
-// Serve starts the comparison player HTTP server and opens the browser.
-func Serve(opts Opts) error {
-	// build player data
-	playerData := PlayerData{
-		ReferenceURL: "/video/reference",
-		EncodedURL:   "/video/encoded",
-	}
-
-	// load per-frame VMAF if available
-	if opts.VMAFData != "" {
-		frames, err := LoadVMAFData(opts.VMAFData)
+// Serve runs the player on localhost until ctx ends. It cuts the videos into
+// segments in a temporary folder first, as the export does, because browsers
+// seek segments to the exact frame and whole files only nearly. Without
+// ffmpeg it serves the files as they are.
+func Serve(ctx context.Context, opts *Options, port int, open bool) error {
+	if !opts.NoSegments {
+		tmp, err := os.MkdirTemp("", "veo-compare-")
 		if err != nil {
-			slog.Warn("could not load VMAF data", "error", err)
-		} else {
-			playerData.Frames = frames
-			playerData.Dips = FindDips(frames, 5.0, 10.0)
-
-			// lCompute stats
-			var sum, minV, maxV float64
-			minV = 100
-			for _, f := range frames {
-				sum += f.VMAF
-				if f.VMAF < minV {
-					minV = f.VMAF
-				}
-				if f.VMAF > maxV {
-					maxV = f.VMAF
-				}
-			}
-			playerData.AvgVMAF = sum / float64(len(frames))
-			playerData.MinVMAF = minV
-			playerData.MaxVMAF = maxV
+			return fmt.Errorf("failed to create a temporary folder: %w", err)
 		}
+		defer func() { _ = os.RemoveAll(tmp) }()
+		local := *opts
+		local.MediaBase = ""
+		local.NoProgressive = true
+		res, err := Export(ctx, &local, tmp)
+		if err == nil {
+			PrintSummary(res.Manifest)
+			return Preview(ctx, tmp, port, open)
+		}
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		slog.Warn("could not segment the videos, serving them whole; seeks may land a few frames off", "error", err)
 	}
-
-	mux := http.NewServeMux()
-
-	// serve video files
-	mux.HandleFunc("/video/reference", func(w http.ResponseWriter, r *http.Request) {
-		http.ServeFile(w, r, opts.Reference)
-	})
-	mux.HandleFunc("/video/encoded", func(w http.ResponseWriter, r *http.Request) {
-		http.ServeFile(w, r, opts.Encoded)
-	})
-
-	// serve player data as JSON
-	mux.HandleFunc("/api/data", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(playerData)
-	})
-
-	// serve the HTML player
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/html")
-		_, _ = w.Write([]byte(playerHTML))
-	})
-
-	// find available port
-	port := opts.Port
-	if port == 0 {
-		port = 8787
+	// the local server always serves its own files, whole, over range requests
+	local := *opts
+	local.MediaBase = ""
+	m, files, err := Build(ctx, &local)
+	if err != nil {
+		return err
+	}
+	handler, err := NewHandler(m, files)
+	if err != nil {
+		return err
 	}
 
 	lc := net.ListenConfig{}
-	listener, err := lc.Listen(context.Background(), "tcp", fmt.Sprintf(":%d", port))
+	listener, err := lc.Listen(ctx, "tcp", fmt.Sprintf("127.0.0.1:%d", port))
 	if err != nil {
-		// try another port
-		listener, err = lc.Listen(context.Background(), "tcp", ":0")
+		// the asked-for port is taken, so let the system pick one
+		listener, err = lc.Listen(ctx, "tcp", "127.0.0.1:0")
 		if err != nil {
 			return fmt.Errorf("failed to start server: %w", err)
 		}
 	}
-	actualPort := listener.Addr().(*net.TCPAddr).Port
-
-	url := fmt.Sprintf("http://localhost:%d", actualPort)
-	fmt.Printf("Comparison player: %s\n", url)
-	fmt.Printf("  Reference: %s\n", filepath.Base(opts.Reference))
-	fmt.Printf("  Encoded:   %s\n", filepath.Base(opts.Encoded))
-	if opts.VMAFData != "" {
-		fmt.Printf("  VMAF data: %s\n", filepath.Base(opts.VMAFData))
-		fmt.Printf("  Dips:      %d quality dips detected\n", len(playerData.Dips))
+	addr, ok := listener.Addr().(*net.TCPAddr)
+	if !ok {
+		return errors.New("failed to start server: no TCP address")
 	}
+
+	url := fmt.Sprintf("http://localhost:%d", addr.Port)
+	fmt.Printf("Comparison player: %s\n", url)
+	PrintSummary(m)
 	fmt.Println("\nPress Ctrl+C to stop")
+	if open {
+		openBrowser(ctx, url)
+	}
 
-	// open browser
-	openBrowser(url)
-
-	return http.Serve(listener, mux)
+	srv := &http.Server{Handler: handler, ReadHeaderTimeout: 10 * time.Second}
+	go func() {
+		<-ctx.Done()
+		_ = srv.Close()
+	}()
+	if err := srv.Serve(listener); !errors.Is(err, http.ErrServerClosed) {
+		return err
+	}
+	return nil
 }
 
-func openBrowser(url string) {
-	var cmd string
+// Exported is what Export wrote.
+type Exported struct {
+	Manifest *Manifest
+	Bytes    int64 // everything in the folder
+}
+
+// Export writes a folder any static host can serve: the player, the manifest
+// and each video, both whole and cut into fragmented MP4 with an HLS playlist.
+func Export(ctx context.Context, opts *Options, dir string) (*Exported, error) {
+	m, files, err := Build(ctx, opts)
+	if err != nil {
+		return nil, err
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return nil, fmt.Errorf("failed to create %s: %w", dir, err)
+	}
+
+	static := web.Static()
+	err = fs.WalkDir(static, ".", func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		in, err := static.Open(path)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = in.Close() }()
+		return writeFile(filepath.Join(dir, filepath.FromSlash(path)), in)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to write player: %w", err)
+	}
+
+	pack := opts.Package
+	if pack == nil {
+		pack = PackageFFmpeg
+	}
+	media := filepath.Join(dir, "media")
+	for _, f := range files {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		s := f.Stream
+		if s != nil && !opts.NoSegments && segmentable(f.Path) {
+			segDir := filepath.Join(media, s.ID)
+			// stale segments from an earlier export would sit beside the new ones
+			if err := os.RemoveAll(segDir); err != nil {
+				return nil, fmt.Errorf("failed to clear %s: %w", segDir, err)
+			}
+			if err := os.MkdirAll(segDir, 0o755); err != nil {
+				return nil, fmt.Errorf("failed to create %s: %w", segDir, err)
+			}
+			start, err := pack(ctx, f.Path, segDir)
+			if err != nil {
+				return nil, err
+			}
+			if s.Segments, err = readSegments(segDir, s.ID, start); err != nil {
+				return nil, fmt.Errorf("%s: %w", filepath.Base(f.Path), err)
+			}
+		}
+		whole := filepath.Join(media, filepath.FromSlash(f.Src))
+		if s != nil && s.Segments != nil && (opts.NoProgressive || s.Bytes > pagesLimit) {
+			if !opts.NoProgressive {
+				slog.Warn("file is over 100 MB, the most GitHub Pages serves, so only its segments are exported", "file", filepath.Base(f.Path))
+			}
+			s.Src = ""
+			if err := os.Remove(whole); err != nil && !errors.Is(err, fs.ErrNotExist) {
+				return nil, err
+			}
+			continue
+		}
+		checkStreamable(f.Path)
+		in, err := os.Open(f.Path)
+		if err != nil {
+			return nil, fmt.Errorf("failed to copy video: %w", err)
+		}
+		err = writeFile(whole, in)
+		_ = in.Close()
+		if err != nil {
+			return nil, fmt.Errorf("failed to copy %s: %w", f.Path, err)
+		}
+	}
+
+	body, err := json.Marshal(m)
+	if err != nil {
+		return nil, fmt.Errorf("failed to encode manifest: %w", err)
+	}
+	if err := checkPrivate(body); err != nil {
+		return nil, err
+	}
+	if err := os.WriteFile(filepath.Join(dir, manifestName), append(body, '\n'), 0o644); err != nil {
+		return nil, fmt.Errorf("failed to write manifest: %w", err)
+	}
+	// stops GitHub Pages from running the folder through Jekyll
+	if err := os.WriteFile(filepath.Join(dir, ".nojekyll"), nil, 0o644); err != nil {
+		return nil, fmt.Errorf("failed to write .nojekyll: %w", err)
+	}
+	total, err := DirSize(dir)
+	if err != nil {
+		return nil, err
+	}
+	return &Exported{Manifest: m, Bytes: total}, nil
+}
+
+// DirSize adds up every file under dir.
+func DirSize(dir string) (int64, error) {
+	var total int64
+	err := filepath.WalkDir(dir, func(_ string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		total += info.Size()
+		return nil
+	})
+	return total, err
+}
+
+// pagesLimit is the largest file GitHub Pages will serve from a repository.
+const pagesLimit = 100 << 20
+
+// checkStreamable warns about a video a static host would serve badly.
+func checkStreamable(path string) {
+	if st, err := os.Stat(path); err == nil && st.Size() > pagesLimit {
+		slog.Warn("file is over 100 MB, the most GitHub Pages serves", "file", filepath.Base(path), "size", FormatBytes(st.Size()))
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return
+	}
+	defer func() { _ = f.Close() }()
+	if fast, err := FastStart(f); err == nil && !fast {
+		slog.Warn("MP4 index is at the end of the file, so a browser must fetch all of it before playing; remux with -movflags +faststart", "file", filepath.Base(path))
+	}
+}
+
+// FastStart reports whether an MP4's moov box comes before its media data,
+// which is what lets a browser start and seek over range requests. A file
+// that isn't an MP4 returns an error.
+func FastStart(r io.ReadSeeker) (bool, error) {
+	var head [16]byte
+	for boxes := 0; boxes < 64; boxes++ {
+		if _, err := io.ReadFull(r, head[:8]); err != nil {
+			return false, fmt.Errorf("no moov box found: %w", err)
+		}
+		size := int64(binary.BigEndian.Uint32(head[:4]))
+		kind := string(head[4:8])
+		used := int64(8)
+		if size == 1 {
+			if _, err := io.ReadFull(r, head[8:16]); err != nil {
+				return false, err
+			}
+			size = int64(binary.BigEndian.Uint64(head[8:16]))
+			used = 16
+		}
+		switch kind {
+		case boxMoov:
+			return true, nil
+		case "mdat":
+			return false, nil
+		}
+		if boxes == 0 && kind != "ftyp" && kind != "styp" {
+			return false, errors.New("not an MP4 file")
+		}
+		if size < used {
+			return false, errors.New("no moov box found")
+		}
+		if _, err := r.Seek(size-used, io.SeekCurrent); err != nil {
+			return false, err
+		}
+	}
+	return false, errors.New("no moov box found")
+}
+
+func writeFile(path string, r io.Reader) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	out, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(out, r); err != nil {
+		_ = out.Close()
+		return err
+	}
+	return out.Close()
+}
+
+// PrintSummary writes one line per stream to stdout.
+func PrintSummary(m *Manifest) {
+	row := func(id string, s *Stream) {
+		line := fmt.Sprintf("  %-4s %s", id, s.Label)
+		if s.Codec != "" {
+			line += ", " + s.Codec
+		}
+		if s.Bytes > 0 {
+			line += fmt.Sprintf(", %s", FormatBytes(s.Bytes))
+		}
+		if s.Score != nil {
+			line += fmt.Sprintf(", mean %s %.2f", m.Metric.Label, s.Score.Mean)
+		}
+		fmt.Println(line)
+	}
+	for _, s := range m.Encodes {
+		row(strings.ToUpper(s.ID), s)
+	}
+	if m.Reference != nil {
+		row("ref", m.Reference)
+	}
+	if key := m.Compare.A + "|" + m.Compare.B; len(m.Moments[key]) > 0 {
+		fmt.Printf("  %d jump points between A and B\n", len(m.Moments[key]))
+	}
+}
+
+func FormatBytes(n int64) string {
+	switch {
+	case n >= 1e9:
+		return fmt.Sprintf("%.2f GB", float64(n)/1e9)
+	case n >= 1e6:
+		return fmt.Sprintf("%.2f MB", float64(n)/1e6)
+	case n >= 1e3:
+		return fmt.Sprintf("%.1f kB", float64(n)/1e3)
+	}
+	return fmt.Sprintf("%d B", n)
+}
+
+func openBrowser(ctx context.Context, url string) {
+	var cmd *exec.Cmd
 	switch runtime.GOOS {
 	case "darwin":
-		cmd = "open"
+		cmd = exec.CommandContext(ctx, "open", url)
 	case "linux":
-		cmd = "xdg-open"
+		cmd = exec.CommandContext(ctx, "xdg-open", url)
 	case "windows":
-		cmd = "start"
+		cmd = exec.CommandContext(ctx, "cmd", "/c", "start", strings.ReplaceAll(url, "&", "^&"))
+	default:
+		return
 	}
-	if cmd != "" {
-		_ = exec.CommandContext(context.Background(), cmd, url).Start()
-	}
+	_ = cmd.Start()
 }
-
-// Ensure strings import is used
-var _ = strings.TrimSpace

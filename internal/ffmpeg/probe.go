@@ -30,6 +30,7 @@ type StreamInfo struct {
 	CodecName      string  `json:"codec_name"`
 	CodecLongName  string  `json:"codec_long_name"`
 	CodecType      string  `json:"codec_type"` // "video", "audio", "subtitle"
+	CodecTag       string  `json:"codec_tag"`  // container sample entry, e.g. "hvc1"
 	Profile        string  `json:"profile"`
 	Width          int     `json:"width"`
 	Height         int     `json:"height"`
@@ -40,8 +41,9 @@ type StreamInfo struct {
 	ColorSpace     string  `json:"color_space"`
 	ColorTransfer  string  `json:"color_transfer"`
 	ColorPrimaries string  `json:"color_primaries"`
-	Duration       float64 `json:"duration"` // seconds
-	BitRate        int64   `json:"bit_rate"` // bits/sec
+	Duration       float64 `json:"duration"`   // seconds
+	StartTime      float64 `json:"start_time"` // seconds
+	BitRate        int64   `json:"bit_rate"`   // bits/sec
 	NbFrames       int     `json:"nb_frames"`
 	RFrameRate     string  `json:"r_frame_rate"`   // e.g. "25/1"
 	AvgFrameRate   string  `json:"avg_frame_rate"` // e.g. "25/1"
@@ -123,6 +125,7 @@ type probeStreamJSON struct {
 	CodecName        string `json:"codec_name"`
 	CodecLongName    string `json:"codec_long_name"`
 	CodecType        string `json:"codec_type"`
+	CodecTag         string `json:"codec_tag_string"`
 	Profile          string `json:"profile"`
 	Width            int    `json:"width"`
 	Height           int    `json:"height"`
@@ -134,6 +137,7 @@ type probeStreamJSON struct {
 	ColorTransfer    string `json:"color_transfer"`
 	ColorPrimaries   string `json:"color_primaries"`
 	Duration         string `json:"duration"`
+	StartTime        string `json:"start_time"`
 	BitRate          string `json:"bit_rate"`
 	NbFrames         string `json:"nb_frames"`
 	RFrameRate       string `json:"r_frame_rate"`
@@ -189,6 +193,7 @@ func convertProbe(raw *probeJSON) *ProbeResult {
 			CodecName:      s.CodecName,
 			CodecLongName:  s.CodecLongName,
 			CodecType:      s.CodecType,
+			CodecTag:       s.CodecTag,
 			Profile:        s.Profile,
 			Width:          s.Width,
 			Height:         s.Height,
@@ -200,6 +205,7 @@ func convertProbe(raw *probeJSON) *ProbeResult {
 			ColorTransfer:  s.ColorTransfer,
 			ColorPrimaries: s.ColorPrimaries,
 			Duration:       parseFloat(s.Duration),
+			StartTime:      parseFloat(s.StartTime),
 			BitRate:        parseInt64(s.BitRate),
 			NbFrames:       parseInt(s.NbFrames),
 			RFrameRate:     s.RFrameRate,

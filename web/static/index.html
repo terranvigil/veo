@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark light">
+<title>veo compare</title>
+<script>
+// set the theme before first paint so a stored choice never flashes
+(function () {
+  try {
+    var t = (location.hash.match(/theme=(light|dark)/) || [])[1] || localStorage.getItem('veo-theme');
+    if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t;
+  } catch (e) { /* storage blocked: follow the system */ }
+})();
+</script>
+<link rel="stylesheet" href="css/player.css">
+</head>
+<body>
+
+<svg width="0" height="0" class="defs" aria-hidden="true" focusable="false">
+  <symbol id="i-play" viewBox="0 0 16 16"><path d="M4.5 2.6v10.8L13.2 8z"/></symbol>
+  <symbol id="i-pause" viewBox="0 0 16 16"><path d="M4 2.5h3v11H4zM9 2.5h3v11H9z"/></symbol>
+  <symbol id="i-prev" viewBox="0 0 16 16"><path d="M10.5 3v10L4 8z"/><path d="M3 3h1.5v10H3z"/></symbol>
+  <symbol id="i-next" viewBox="0 0 16 16"><path d="M5.5 3v10L12 8z"/><path d="M11.5 3H13v10h-1.5z"/></symbol>
+  <symbol id="i-jump-prev" viewBox="0 0 16 16"><path d="M8 3.2v9.6L2.2 8zM13.8 3.2v9.6L8 8z"/></symbol>
+  <symbol id="i-jump-next" viewBox="0 0 16 16"><path d="M8 3.2v9.6L13.8 8zM2.2 3.2v9.6L8 8z"/></symbol>
+  <symbol id="i-loop" viewBox="0 0 16 16"><path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" d="M3 7V6a2 2 0 0 1 2-2h7m0 0L10 2m2 2-2 2M13 9v1a2 2 0 0 1-2 2H4m0 0 2 2m-2-2 2-2"/></symbol>
+  <symbol id="i-flip" viewBox="0 0 16 16"><path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" d="M2 5.5h11m0 0L10.5 3M13 5.5 10.5 8M14 10.5H3m0 0L5.5 8M3 10.5 5.5 13"/></symbol>
+  <symbol id="i-theme" viewBox="0 0 16 16"><circle cx="8" cy="8" r="5.75" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M8 2.25a5.75 5.75 0 0 1 0 11.5z"/></symbol>
+  <symbol id="i-check" viewBox="0 0 16 16"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="m3.5 8.5 3 3 6-7"/></symbol>
+  <symbol id="i-warn" viewBox="0 0 16 16"><path d="M8 1.8 15 14H1zm-.75 4.7v3.6h1.5V6.5zm0 4.7v1.5h1.5v-1.5z" fill-rule="evenodd"/></symbol>
+</svg>
+
+<div class="app" id="app">
+
+  <header class="bar">
+    <div class="brand" aria-hidden="true"><b>veo</b><i>compare</i></div>
+    <div class="title">
+      <h1 id="title">Loading</h1>
+      <p id="meta"></p>
+    </div>
+    <nav class="seg" id="seg-variant" aria-label="Resolution" hidden></nav>
+    <div class="tools" role="toolbar" aria-label="View">
+      <div class="seg" role="group" aria-label="Layout" id="seg-view">
+        <button type="button" data-view="split" aria-pressed="true" title="Split view (S)">Split</button>
+        <button type="button" data-view="side" aria-pressed="false" title="Side by side (D)">Side by side</button>
+        <button type="button" data-view="solo" aria-pressed="false" title="One stream at a time (1, 2, 3)">Single</button>
+      </div>
+      <div class="seg" role="group" aria-label="Stream shown" id="seg-solo" hidden></div>
+      <button type="button" class="btn" id="btn-flip" title="Flip A and B (F)"><svg><use href="#i-flip"/></svg><span class="lbl">Flip</span></button>
+      <button type="button" class="btn" id="btn-peek" aria-pressed="false" title="Show the source (hold R)" hidden>Source</button>
+      <div class="seg" role="group" aria-label="Zoom" id="seg-zoom">
+        <button type="button" data-zoom="1" aria-pressed="true" title="Fit (0)">Fit</button>
+        <button type="button" data-zoom="2" aria-pressed="false">2&times;</button>
+        <button type="button" data-zoom="4" aria-pressed="false">4&times;</button>
+        <button type="button" data-zoom="8" aria-pressed="false">8&times;</button>
+      </div>
+      <button type="button" class="btn icon" id="btn-theme" aria-label="Switch between light and dark" title="Theme (T)"><svg><use href="#i-theme"/></svg></button>
+      <button type="button" class="btn icon" id="btn-help" aria-label="Keyboard shortcuts" title="Keyboard shortcuts (?)"><span aria-hidden="true">?</span></button>
+    </div>
+  </header>
+
+  <section class="score" id="score" aria-label="The two encodes"></section>
+
+  <div class="stagecol">
+    <div class="stage" id="stage" data-view="split">
+      <div class="divider" id="divider" role="slider" tabindex="0" aria-label="Split position" aria-valuemin="0" aria-valuemax="100" aria-valuenow="50"><span></span></div>
+      <div class="tag tag-l" id="tag-l"></div>
+      <div class="tag tag-r" id="tag-r"></div>
+      <div class="zoomchip" id="zoomchip" hidden></div>
+      <div class="loading" id="loading">Loading video</div>
+    </div>
+
+    <div class="transport" role="toolbar" aria-label="Playback">
+      <div class="tgroup">
+        <button type="button" class="btn icon" id="btn-jprev" aria-label="Previous jump point" title="Previous jump point (P)"><svg><use href="#i-jump-prev"/></svg></button>
+        <button type="button" class="btn icon" id="btn-fprev" aria-label="Back one frame" title="Back one frame (Left)"><svg><use href="#i-prev"/></svg></button>
+        <button type="button" class="btn icon play" id="btn-play" aria-label="Play" title="Play or pause (Space)"><svg><use href="#i-play" id="play-icon"/></svg></button>
+        <button type="button" class="btn icon" id="btn-fnext" aria-label="Forward one frame" title="Forward one frame (Right)"><svg><use href="#i-next"/></svg></button>
+        <button type="button" class="btn icon" id="btn-jnext" aria-label="Next jump point" title="Next jump point (N)"><svg><use href="#i-jump-next"/></svg></button>
+      </div>
+      <div class="clock" aria-live="off">
+        <span class="tc" id="tc">00:00.000</span>
+        <span class="fr">frame <b id="fnum">0</b><span id="ftotal"></span></span>
+      </div>
+      <div class="readout" id="readout" aria-label="Quality at this frame"></div>
+      <div class="tgroup end">
+        <button type="button" class="btn" id="btn-loop" aria-pressed="false" title="Loop two seconds around this frame (L)"><svg><use href="#i-loop"/></svg><span class="lbl">Loop</span></button>
+        <div class="seg" role="group" aria-label="Speed" id="seg-rate">
+          <button type="button" data-rate="0.25" aria-pressed="false">&frac14;</button>
+          <button type="button" data-rate="0.5" aria-pressed="false">&frac12;</button>
+          <button type="button" data-rate="1" aria-pressed="true">1&times;</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <aside class="rail" aria-label="Jump points and notes">
+    <section class="panel" id="jump">
+      <header>
+        <h2>Jump to</h2>
+        <span class="hint"><kbd>P</kbd><kbd>N</kbd></span>
+      </header>
+      <div class="chips" id="jump-filter" role="group" aria-label="Kinds of jump point"></div>
+      <ol class="moments" id="moments"></ol>
+      <p class="empty" id="moments-empty" hidden></p>
+    </section>
+    <section class="panel" id="about" hidden>
+      <header>
+        <h2 class="about-h">How this was made</h2>
+        <button type="button" class="btn sm" id="btn-about" title="How this was made (I)">Details</button>
+      </header>
+      <p class="lede" id="lede"></p>
+    </section>
+  </aside>
+
+  <section class="timeline" aria-label="Quality timeline">
+    <header>
+      <h2 id="tl-title">Quality per frame</h2>
+      <div class="legend" id="legend"></div>
+      <span class="hint" id="tl-hint">Click or drag to seek</span>
+    </header>
+    <div class="chart" id="chart" role="slider" tabindex="0" aria-label="Position" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0">
+      <svg id="plot" aria-hidden="true"></svg>
+      <div class="pins" id="pins"></div>
+      <div class="tip" id="tip" hidden></div>
+    </div>
+  </section>
+</div>
+
+<p class="sr" id="live" aria-live="polite"></p>
+<div class="fatal" id="fatal" hidden></div>
+
+<dialog id="about-dlg" aria-labelledby="about-dlg-h">
+  <form method="dialog">
+    <header>
+      <h2 id="about-dlg-h" class="about-h">How this was made</h2>
+      <button class="btn" value="close" aria-label="Close">Esc</button>
+    </header>
+    <div class="notes" id="notes"></div>
+  </form>
+</dialog>
+
+<dialog id="help" aria-labelledby="help-h">
+  <form method="dialog">
+    <header>
+      <h2 id="help-h">Keyboard shortcuts</h2>
+      <button class="btn" value="close" aria-label="Close">Esc</button>
+    </header>
+    <div class="keys">
+      <section>
+        <h3>Playback</h3>
+        <dl>
+          <dt><kbd>Space</kbd></dt><dd>Play or pause</dd>
+          <dt><kbd>&larr;</kbd> <kbd>&rarr;</kbd></dt><dd>Step one frame</dd>
+          <dt><kbd>Shift</kbd> <kbd>&larr;</kbd> <kbd>&rarr;</kbd></dt><dd>Step one second</dd>
+          <dt><kbd>Home</kbd> <kbd>End</kbd></dt><dd>First or last frame</dd>
+          <dt><kbd>L</kbd></dt><dd>Loop two seconds around this frame</dd>
+          <dt><kbd>,</kbd> <kbd>.</kbd></dt><dd>Slower, faster</dd>
+        </dl>
+      </section>
+      <section>
+        <h3>Finding what matters</h3>
+        <dl>
+          <dt><kbd>N</kbd> <kbd>P</kbd></dt><dd>Next or previous jump point</dd>
+          <dt><kbd>]</kbd> <kbd>[</kbd></dt><dd>The same</dd>
+          <dt>Click the timeline</dt><dd>Seek to that frame</dd>
+        </dl>
+      </section>
+      <section>
+        <h3>Comparing</h3>
+        <dl>
+          <dt><kbd>S</kbd></dt><dd>Split view</dd>
+          <dt><kbd>D</kbd></dt><dd>Side by side</dd>
+          <dt><kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd></dt><dd>Only A, only B, only the source</dd>
+          <dt><kbd>F</kbd></dt><dd>Flip A and B</dd>
+          <dt>Hold <kbd>R</kbd></dt><dd>Show the source while held</dd>
+        </dl>
+      </section>
+      <section>
+        <h3>Looking closer</h3>
+        <dl>
+          <dt><kbd>Z</kbd></dt><dd>Zoom: fit, 2&times;, 4&times;, 8&times;</dd>
+          <dt><kbd>+</kbd> <kbd>&minus;</kbd> <kbd>0</kbd></dt><dd>Zoom in, out, fit</dd>
+          <dt>Drag, wheel</dt><dd>Pan and zoom both pictures together</dd>
+          <dt>Double-click</dt><dd>Zoom in on that spot</dd>
+          <dt><kbd>I</kbd></dt><dd>How this was made</dd>
+          <dt><kbd>T</kbd></dt><dd>Light or dark</dd>
+          <dt><kbd>?</kbd></dt><dd>This list</dd>
+        </dl>
+      </section>
+    </div>
+  </form>
+</dialog>
+
+<script src="js/player.js"></script>
+</body>
+</html>

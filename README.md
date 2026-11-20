@@ -90,11 +90,15 @@ Options: `--mode crf|qp`, `--dry-run`, `--checkpoint file.json`, `--encode-outpu
 ### Visual QA with comparison player
 
 ```bash
-veo quality measure --reference original.mp4 --distorted encoded.mp4 \
-  --per-frame -o vmaf_data.json
-veo compare --reference original.mp4 --encoded encoded.mp4 \
-  --vmaf-data vmaf_data.json
+# Two encodes of one source, frame-locked, with both VMAF curves
+veo compare --a ours.mp4 --vmaf-a ours.vmaf.json --label-a ours \
+            --b x265.mp4 --vmaf-b x265.vmaf.json --label-b x265
+
+# The same player as a static folder for GitHub Pages
+veo compare export --out site/title ...
 ```
+
+See [the comparison player guide](docs/comparison-player.md).
 
 ### Other commands
 
