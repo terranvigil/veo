@@ -91,8 +91,8 @@
           : String(err.message || err));
       return;
     }
-    if (!Array.isArray(m.encodes) || !m.encodes.length || !m.encodes[0].src) {
-      fatal('This manifest has no encodes', 'manifest.json needs an encodes list, each entry with an id and a src.');
+    if (!Array.isArray(m.encodes) || !m.encodes.length || !m.encodes.every(e => e.src || (e.segments && e.segments.list && e.segments.list.length))) {
+      fatal('This manifest has no encodes', 'manifest.json needs an encodes list, each entry with an id and a src or segments.');
       return;
     }
     S.m = m;
