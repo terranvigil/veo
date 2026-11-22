@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"math"
 	"os"
 	"os/exec"
 	"path"
@@ -71,7 +72,9 @@ func readSegments(dir, src string, start float64) (*Segments, error) {
 	out := &Segments{
 		Playlist: path.Join(src, playlistName),
 		Init:     path.Join(src, initFile),
-		Start:    round(start, 6),
+		// rounded down: a start a hair late puts frame 0 before zero,
+		// and Chrome drops that whole first segment
+		Start: math.Floor(start*1e6) / 1e6,
 	}
 	var at float64
 	for _, seg := range list {

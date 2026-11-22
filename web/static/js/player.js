@@ -234,7 +234,8 @@
         ms.duration = last.start + last.duration;
         st.sb = ms.addSourceBuffer(s.mime);
         // moves the stream so its first frame is at zero, whatever shift the muxer gave this encode
-        st.sb.timestampOffset = -(seg.start || 0);
+        // 10 us short of the shift, so rounding never puts frame 0 below zero, where Chrome drops it
+        st.sb.timestampOffset = -Math.max(0, (seg.start || 0) - 1e-5);
         await append(st, await grab(st, seg.init));
         st.ready = true;
         pump(s);
