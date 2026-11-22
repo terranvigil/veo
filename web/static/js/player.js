@@ -29,8 +29,8 @@
   const ZOOMS = [1, 2, 4, 8];
   const RATES = [0.25, 0.5, 1];
   const KINDS = {
-    'dip-a': { stream: 'a', shape: 'dip', verb: 'dip' },
-    'dip-b': { stream: 'b', shape: 'dip', verb: 'dip' },
+    'dip-a': { stream: 'a', shape: 'dip', verb: 'at its lowest' },
+    'dip-b': { stream: 'b', shape: 'dip', verb: 'at its lowest' },
     'lead-a': { stream: 'a', shape: 'lead', verb: 'ahead' },
     'lead-b': { stream: 'b', shape: 'lead', verb: 'ahead' },
   };
@@ -159,6 +159,7 @@
       video.addEventListener('loadedmetadata', () => {
         // the picture's own shape, which also covers non-square pixels
         if (video.videoWidth) stage.style.setProperty('--ar', `${video.videoWidth} / ${video.videoHeight}`);
+        renderScale();
         seek(S.frame, { quiet: true });
       });
       video.addEventListener('loadeddata', () => {
@@ -581,9 +582,7 @@
     div.style.left = (S.split * 100).toFixed(3) + '%';
     div.setAttribute('aria-valuenow', Math.round(S.split * 100));
 
-    const chip = $('#zoomchip');
-    chip.hidden = S.zoom === 1;
-    chip.textContent = S.zoom + '×';
+    renderScale();
 
     for (const b of $$('#seg-view button')) b.setAttribute('aria-pressed', String(b.dataset.view === S.view));
     for (const b of $$('#seg-zoom button')) b.setAttribute('aria-pressed', String(+b.dataset.zoom === S.zoom));
@@ -594,6 +593,32 @@
     $('#btn-peek').hidden = !streams.ref || S.pair.includes('ref');
     $('#btn-peek').setAttribute('aria-pressed', String(S.peek));
     renderTags();
+  }
+
+  // how many screen pixels one video pixel covers: Fit usually shrinks the
+  // picture, which hides exactly the detail a viewer came to compare
+  function renderScale() {
+    const chip = $('#zoomchip');
+    const s = everything().find((x) => x.video && x.video.videoWidth);
+    if (!s) { chip.hidden = true; return; }
+    const v = s.video;
+    const w = s.layer.clientWidth;
+    const hh = s.layer.clientHeight;
+    const fit = Math.min(w / v.videoWidth, hh / v.videoHeight);
+    const px = fit * S.zoom * (window.devicePixelRatio || 1);
+    // past 1:1 the browser would blur the picture as it enlarges it, so show each pixel as a square
+    for (const x of everything()) if (x.video) x.video.classList.toggle('pixels', px > 1.01);
+    chip.hidden = false;
+    chip.classList.toggle('nudge', S.zoom === 1 && px < 0.99);
+    if (S.zoom === 1) {
+      chip.textContent = px < 0.99
+        ? `Shrunk to ${Math.round(px * 100)}% to fit. Scroll, double-click or press + to zoom in`
+        : `${px < 1.01 ? 'Actual size' : `Enlarged to ${Math.round(px * 100)}%`}. Scroll or press + to zoom in`;
+    } else {
+      chip.textContent = px < 0.99
+        ? `${S.zoom}× · still shrunk to ${Math.round(px * 100)}%`
+        : `${S.zoom}× · each video pixel is ${px.toFixed(1)} screen pixels`;
+    }
   }
 
   function renderTags() {
@@ -831,6 +856,15 @@
       const side = swap ? (mo.side === 'a' ? 'b' : 'a') : mo.side;
       return { kind: `${mo.kind}-${side}`, rank: mo.rank, frame: mo.frame, a: scoreAt('a', mo.frame), b: scoreAt('b', mo.frame) };
     }).filter((mo) => KINDS[mo.kind] && streams[KINDS[mo.kind].stream]);
+    if (a && b) {
+      // a dip of one encode says little in a comparison unless it is the
+      // worst moment of the pair, so only that one stays beside the leads
+      const own = (mo) => (KINDS[mo.kind].stream === 'a' ? mo.a : mo.b);
+      const dips = momentCache.filter((mo) => KINDS[mo.kind].shape === 'dip' && own(mo) != null);
+      const worst = dips.reduce((w, mo) => (w == null || own(mo) < own(w) ? mo : w), null);
+      momentCache = momentCache.filter((mo) => KINDS[mo.kind].shape !== 'dip' || mo === worst);
+      if (worst) worst.rank = 1;
+    }
     return momentCache;
   }
   const inFilter = (mo) => S.filter === 'all' || mo.kind === S.filter;

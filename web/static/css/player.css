@@ -253,11 +253,13 @@ kbd {
 .tag .proxy { color: #fab219; font-weight: 500; display: inline-flex; align-items: center; gap: 4px; }
 .tag .proxy svg { width: 12px; height: 12px; fill: currentColor; }
 .loading { position: absolute; inset: 0; z-index: 4; display: grid; place-items: center; color: #8d929a; font-size: 12.5px; pointer-events: none; }
+.layer video.pixels { image-rendering: pixelated; }
 .zoomchip {
-  position: absolute; bottom: 10px; right: 10px; z-index: 6;
+  position: absolute; bottom: 10px; right: 10px; z-index: 6; max-width: calc(100% - 20px);
   padding: 3px 8px; border-radius: 6px; font: 12px var(--mono);
   background: rgba(10, 11, 13, .78); color: #f2f3f5; pointer-events: none;
 }
+.zoomchip.nudge { background: rgba(219, 112, 22, .92); font-family: inherit; font-weight: 500; }
 
 /* ---- transport ---- */
 
@@ -274,7 +276,7 @@ kbd {
 .clock .fr { color: var(--ink-3); font-size: 12px; }
 .clock .fr b { color: var(--ink-2); font-weight: 500; }
 .readout { display: flex; align-items: center; gap: 14px; font: 13px var(--mono); font-variant-numeric: tabular-nums; }
-.readout span { display: inline-flex; align-items: center; gap: 6px; }
+.readout > span { display: inline-flex; align-items: center; gap: 6px; }
 .readout i { font-style: normal; color: var(--ink-3); font-family: var(--sans); font-size: 12px; }
 .readout b { font-weight: 500; min-width: 5ch; }
 
@@ -323,7 +325,7 @@ h2 { font-size: 11px; font-weight: 600; letter-spacing: .07em; text-transform: u
 .notes ul { margin: 0; padding: 0; list-style: none; display: flex; flex-wrap: wrap; gap: 4px 14px; }
 .notes .files { flex-direction: column; gap: 4px; }
 .notes .files li { display: flex; align-items: center; gap: 8px; }
-.notes .files span { color: var(--ink-3); font: 12px var(--mono); }
+.notes .files span:not(.key) { color: var(--ink-3); font: 12px var(--mono); }
 
 /* ---- timeline ---- */
 
